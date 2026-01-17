@@ -1,7 +1,9 @@
+use core::time;
 use std::{
     thread,
-    time::{Duration, SystemTime},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
+use thresher::{Thresher, Message};
 
 fn main() {
     println!("Hello, world!");
@@ -9,7 +11,7 @@ fn main() {
 }
 
 fn first_test() {
-    let _msg0 = thresher::Message {
+    let _msg0 = Message {
         sent: SystemTime::now(),
         payload: String::from("Hello, world! from Thresher"),
     };
@@ -18,19 +20,36 @@ fn first_test() {
         sent: SystemTime::now(),
         payload: String::from("Good bye world! from Thresher"),
     };
-    let tsr = thresher::Thresher::new();
+
+    let tsr = Thresher::<Message>::new::<i32>(
+        128,
+        time::Duration::new(5, 0),
+        || 0,
+        |context| context < &51,
+        |received, context| {
+            let dur = received.sent.duration_since(UNIX_EPOCH).unwrap();
+            println!(
+                "#{} ::: @{}.{} got: `{}`",
+                context,
+                dur.as_secs(),
+                dur.as_micros() % 1000000,
+                received.payload
+            );
+            context + 1
+        },
+    );
     let tx0 = tsr.clone_tx().unwrap();
     _ = tx0.send(_msg0);
     {
         let tx1 = tsr.clone_tx().unwrap();
         _ = tx1.send(_msg1);
     }
-    for _ in 1..=1000 {
+    for _ in 1..=200 {
         let _msg = thresher::Message {
             sent: SystemTime::now(),
             payload: String::from("Loop!"),
         };
-        _ = tx0.send(_msg);
+        tx0.send(_msg).unwrap();
     }
     // let client = tsr.new_sender();
     // let _ = client.send(String::from("Hello, world! from CLIENT!!!"));

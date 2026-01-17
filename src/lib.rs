@@ -1,9 +1,4 @@
-use std::{
-    fmt::Debug,
-    sync::mpsc,
-    thread,
-    time,
-};
+use std::{sync::mpsc, thread, time};
 
 pub type MsgPayload = String;
 
@@ -13,23 +8,34 @@ pub struct Message {
     pub payload: MsgPayload,
 }
 
-pub struct Thresher {
-    throat: Option<mpsc::Sender<Message>>,
+pub struct Thresher<MSG> {
+    throat: Option<mpsc::SyncSender<MSG>>,
     worker: Option<thread::JoinHandle<()>>,
 }
 
-impl Thresher {
-    pub fn new() -> Thresher {
-        let (tx, rx): (mpsc::Sender<Message>, mpsc::Receiver<Message>) = mpsc::channel();
-        let handle = thread::spawn(|| {
-            for received in rx {
-                let dur = received.sent.duration_since(time::UNIX_EPOCH).unwrap();
-                println!(
-                    "@{}.{} got: `{}`",
-                    dur.as_secs(),
-                    dur.as_micros() % 1000000,
-                    received.payload
-                );
+impl<MSG: 'static + Send> Thresher<MSG> {
+    pub fn new<CTX: 'static>(
+        bound: usize,
+        timeout: time::Duration,
+        init: fn() -> CTX,
+        before: fn(&CTX) -> bool,
+        on_msg: fn(MSG, &CTX) -> CTX,
+    ) -> Thresher<MSG> {
+        let (tx, rx) = mpsc::sync_channel::<MSG>(bound);
+        let handle = thread::spawn(move || {
+            let mut context = init();
+            while before(&context) {
+                //for received in rx {
+                let wait_for_msg = rx.recv_timeout(timeout);
+                match wait_for_msg {
+                    Err(e) => match e {
+                        mpsc::RecvTimeoutError::Timeout => continue,
+                        mpsc::RecvTimeoutError::Disconnected => break,
+                    },
+                    Ok(m) => {
+                        context = on_msg(m, &context);
+                    }
+                }
             }
         });
         Thresher {
@@ -38,7 +44,7 @@ impl Thresher {
         }
     }
 
-    pub fn clone_tx(&self) -> Option<mpsc::Sender<Message>> {
+    pub fn clone_tx(&self) -> Option<mpsc::SyncSender<MSG>> {
         match &self.throat {
             Some(a) => Some(a.clone()),
             None => None,
@@ -55,7 +61,7 @@ impl Thresher {
     }*/
 }
 
-impl Drop for Thresher {
+impl<MSG> Drop for Thresher<MSG> {
     /// Drop with thread join if exists
     fn drop(&mut self) {
         self.throat = None;
