@@ -1,47 +1,11 @@
 use core::time;
 use std::{
-    fmt::{self, Debug},
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime},
 };
-use thresher::{Thresher, ThreshEngine};
-
-type MsgPayload = String;
-
-#[derive(Debug)]
-struct Message {
-    pub sent: SystemTime, // Вынести в наследников
-    pub payload: MsgPayload,
-}
-
-impl fmt::Display for Message {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "'{}'@{}", self.payload, self.sent.duration_since(UNIX_EPOCH).unwrap_or(Duration::ZERO).as_millis())
-    }
-}
-
-type SimpleCounter = u8;
-
-impl ThreshEngine<Message> for SimpleCounter 
-{
-    fn new() -> Self {
-        0
-    }
-
-    fn on_receive(&mut self, msg: &Message) {
-        println!("{:#04X}->{}", *self, msg);
-        *self = self.wrapping_add(1);
-    }
-
-    fn on_timeout(&mut self) {
-        println!("##### TIMEOUT!");
-    }
-
-    fn on_disconnect(&mut self) {
-        println!("##### Disconnected from Thresher!");
-    }
-}
-
+use thresher::{
+    cmd_queue::{Message, SimpleCounter}, engine::{Thresher}
+};
 
 
 fn main() {
