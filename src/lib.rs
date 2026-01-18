@@ -1,33 +1,45 @@
 use std::{sync::mpsc, thread, time};
 
-pub struct Thresher<MSG> {
-    throat: Option<mpsc::SyncSender<MSG>>,
+pub trait ThreshEngine<T> {
+    // where T: std::marker::Send, { <-- add if init has to be made in the parent thread
+    fn new() -> Self;
+    fn on_receive(&mut self, msg: &T);
+    fn on_timeout(&mut self) {}
+    fn on_disconnect(&mut self) {}
+    fn is_workable(&self) -> bool {
+        true
+    }
+}
+
+pub struct Thresher<T> {
+    throat: Option<mpsc::SyncSender<T>>,
     worker: Option<thread::JoinHandle<()>>,
 }
 
-impl<MSG: 'static + Send> Thresher<MSG> {
-    pub fn new<CTX: 'static>(
-        bound: usize,
-        timeout: time::Duration,
-        init: fn() -> CTX,
-        before: fn(&CTX) -> bool,
-        on_msg: fn(MSG, &mut CTX),
-    ) -> Thresher<MSG> {
-        let (tx, rx) = mpsc::sync_channel::<MSG>(bound);
+impl<T: Send + 'static> Thresher<T> {
+    pub fn start<U>(bound: usize, timeout: time::Duration) -> Thresher<T>
+    where
+        U: ThreshEngine<T> + 'static,
+    {
+        let (tx, rx) = mpsc::sync_channel::<T>(bound);
         let handle = thread::spawn(move || {
-            let mut context = init();
-            while before(&context) {
+            let mut engine = U::new(); // <-- move it out if init has to be made in the parent thread
+            while engine.is_workable() {
                 let wait_for_msg = rx.recv_timeout(timeout);
                 match wait_for_msg {
                     Err(e) => match e {
-                        mpsc::RecvTimeoutError::Timeout => continue,
+                        mpsc::RecvTimeoutError::Timeout => {
+                            engine.on_timeout();
+                            continue;
+                        }
                         mpsc::RecvTimeoutError::Disconnected => break,
                     },
                     Ok(m) => {
-                        on_msg(m, &mut context);
+                        engine.on_receive(&m);
                     }
                 }
             }
+            engine.on_disconnect();
         });
         Thresher {
             throat: Some(tx),
@@ -35,24 +47,15 @@ impl<MSG: 'static + Send> Thresher<MSG> {
         }
     }
 
-    pub fn clone_tx(&self) -> Option<mpsc::SyncSender<MSG>> {
+    pub fn clone_tx(&self) -> Option<mpsc::SyncSender<T>> {
         match &self.throat {
             Some(a) => Some(a.clone()),
             None => None,
         }
     }
-
-    /*pub fn new_sender(&self) -> ThresherClient {
-        let throat;
-        match &self.throat {
-            Some(a) => throat = Some(a.clone()),
-            None => throat = None,
-        }
-        ThresherClient { throat }
-    }*/
 }
 
-impl<MSG> Drop for Thresher<MSG> {
+impl<T> Drop for Thresher<T> {
     /// Drop with thread join if exists
     fn drop(&mut self) {
         self.throat = None;
@@ -89,4 +92,14 @@ impl ThresherClient {
         Err(mpsc::SendError(res))
     }
 }
+// ... in Thresher:
+    pub fn new_sender(&self) -> ThresherClient {
+        let throat;
+        match &self.throat {
+            Some(a) => throat = Some(a.clone()),
+            None => throat = None,
+        }
+        ThresherClient { throat }
+    }
+
 */
