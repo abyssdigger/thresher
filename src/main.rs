@@ -3,7 +3,15 @@ use std::{
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use thresher::{Thresher, Message};
+use thresher::Thresher;
+
+type MsgPayload = String;
+
+#[derive(Debug)]
+struct Message {
+    pub sent: SystemTime, // Вынести в наследников
+    pub payload: MsgPayload,
+}
 
 fn main() {
     println!("Hello, world!");
@@ -16,7 +24,7 @@ fn first_test() {
         payload: String::from("Hello, world! from Thresher"),
     };
     thread::sleep(Duration::from_millis(1));
-    let _msg1 = thresher::Message {
+    let _msg1 = Message {
         sent: SystemTime::now(),
         payload: String::from("Good bye world! from Thresher"),
     };
@@ -30,12 +38,12 @@ fn first_test() {
             let dur = received.sent.duration_since(UNIX_EPOCH).unwrap();
             println!(
                 "#{} ::: @{}.{} got: `{}`",
-                context,
+                *context,
                 dur.as_secs(),
                 dur.as_micros() % 1000000,
                 received.payload
             );
-            context + 1
+            *context += 1
         },
     );
     let tx0 = tsr.clone_tx().unwrap();
@@ -45,7 +53,7 @@ fn first_test() {
         _ = tx1.send(_msg1);
     }
     for _ in 1..=200 {
-        let _msg = thresher::Message {
+        let _msg = Message {
             sent: SystemTime::now(),
             payload: String::from("Loop!"),
         };

@@ -1,13 +1,5 @@
 use std::{sync::mpsc, thread, time};
 
-pub type MsgPayload = String;
-
-#[derive(Debug)]
-pub struct Message {
-    pub sent: time::SystemTime, // Вынести в наследников
-    pub payload: MsgPayload,
-}
-
 pub struct Thresher<MSG> {
     throat: Option<mpsc::SyncSender<MSG>>,
     worker: Option<thread::JoinHandle<()>>,
@@ -19,13 +11,12 @@ impl<MSG: 'static + Send> Thresher<MSG> {
         timeout: time::Duration,
         init: fn() -> CTX,
         before: fn(&CTX) -> bool,
-        on_msg: fn(MSG, &CTX) -> CTX,
+        on_msg: fn(MSG, &mut CTX),
     ) -> Thresher<MSG> {
         let (tx, rx) = mpsc::sync_channel::<MSG>(bound);
         let handle = thread::spawn(move || {
             let mut context = init();
             while before(&context) {
-                //for received in rx {
                 let wait_for_msg = rx.recv_timeout(timeout);
                 match wait_for_msg {
                     Err(e) => match e {
@@ -33,7 +24,7 @@ impl<MSG: 'static + Send> Thresher<MSG> {
                         mpsc::RecvTimeoutError::Disconnected => break,
                     },
                     Ok(m) => {
-                        context = on_msg(m, &context);
+                        on_msg(m, &mut context);
                     }
                 }
             }
