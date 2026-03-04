@@ -1,30 +1,41 @@
-use std::{fmt, time::{Duration, SystemTime, UNIX_EPOCH}};
+use std::{
+    fmt,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use crate::engine::ThreshEngine;
 
-type MsgPayload = String;
-
 #[derive(Debug)]
-pub struct Message {
+pub struct CmdMessage<Payload> {
     pub sent: SystemTime, // Вынести в наследников
-    pub payload: MsgPayload,
+    pub payload: Payload,
 }
 
-impl fmt::Display for Message {
+impl<T: std::fmt::Display> fmt::Display for CmdMessage<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "'{}'@{}", self.payload, self.sent.duration_since(UNIX_EPOCH).unwrap_or(Duration::ZERO).as_millis())
+        write!(
+            f,
+            "'{}'@{}",
+            self.payload,
+            self.sent
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or(Duration::ZERO)
+                .as_millis()
+        )
     }
 }
 
-pub type SimpleCounter = u8;
+pub type ShortCounter = u8;
 
-impl ThreshEngine<Message> for SimpleCounter 
+impl<T> ThreshEngine<CmdMessage<T>> for ShortCounter
+where
+    CmdMessage<T>: std::fmt::Display
 {
-    fn new() -> Self {
+    fn init() -> Self {
         0
     }
 
-    fn on_receive(&mut self, msg: &Message) {
+    fn on_receive(&mut self, msg: &CmdMessage<T>) {
         println!("{:#04X}->{}", *self, msg);
         *self = self.wrapping_add(1);
     }

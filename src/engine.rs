@@ -1,67 +1,96 @@
-use std::{sync::mpsc, thread, time};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver},
+    },
+    thread, time,
+};
 
 pub trait ThreshEngine<T> {
     // where T: std::marker::Send, { <-- add if init has to be made in the parent thread
-    fn new() -> Self;
+    fn init() -> Self;
+    fn is_operable(&self) -> bool {
+        true
+    }
     fn on_receive(&mut self, msg: &T);
     fn on_timeout(&mut self) {}
     fn on_disconnect(&mut self) {}
-    fn is_workable(&self) -> bool {
-        true
-    }
 }
 
-pub struct Thresher<T> {
+pub struct Thresher<T: Send> {
+    inloop: Arc<AtomicBool>,
     throat: Option<mpsc::SyncSender<T>>,
     worker: Option<thread::JoinHandle<()>>,
 }
 
-impl<T: Send + 'static> Thresher<T> {
-    pub fn start<U>(bound: usize, timeout: time::Duration) -> Thresher<T>
-    where
-        U: ThreshEngine<T> + 'static,
-    {
-        let (tx, rx) = mpsc::sync_channel::<T>(bound);
-        let handle = thread::spawn(move || {
-            let mut engine = U::new(); // <-- move it out if init has to be made in the parent thread
-            while engine.is_workable() {
-                let wait_for_msg = rx.recv_timeout(timeout);
-                match wait_for_msg {
-                    Err(e) => match e {
-                        mpsc::RecvTimeoutError::Timeout => {
-                            engine.on_timeout();
-                            continue;
-                        }
-                        mpsc::RecvTimeoutError::Disconnected => break,
-                    },
-                    Ok(m) => {
-                        engine.on_receive(&m);
+impl<Msg: Send + 'static> Thresher<Msg> {
+    fn engine<Engine: ThreshEngine<Msg>>(
+        rx: Receiver<Msg>,
+        timeout: time::Duration,
+        in_loop: Arc<AtomicBool>,
+    ) {
+        let mut engine = Engine::init(); // <-- move it out if init has to be made in the parent thread
+        while in_loop.load(Ordering::Relaxed) && engine.is_operable() {
+            let wait_for_msg: Result<Msg, mpsc::RecvTimeoutError> = rx.recv_timeout(timeout);
+            match wait_for_msg {
+                Err(e) => match e {
+                    mpsc::RecvTimeoutError::Timeout => {
+                        engine.on_timeout();
+                        continue;
                     }
+                    mpsc::RecvTimeoutError::Disconnected => {
+                        println!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+                        break;
+                    }
+                },
+                Ok(m) => {
+                    engine.on_receive(&m);
                 }
             }
-            engine.on_disconnect();
-        });
+        }
+        engine.on_disconnect();
+    }
+
+    pub fn start<Engine: ThreshEngine<Msg>>(
+        bound: usize,
+        timeout: time::Duration,
+    ) -> Thresher<Msg> {
+        let (tx, rx) = mpsc::sync_channel::<Msg>(bound);
+        let inloop= Arc::new(AtomicBool::new(true));
+        let inloop_clone = Arc::clone(&inloop);
+        let handle: thread::JoinHandle<()> =
+            thread::spawn(move || Self::engine::<Engine>(rx, timeout, inloop_clone));
         Thresher {
+            inloop,
             throat: Some(tx),
             worker: Some(handle),
         }
     }
 
-    pub fn clone_tx(&self) -> Option<mpsc::SyncSender<T>> {
+    pub fn clone_tx(&self) -> Option<mpsc::SyncSender<Msg>> {
         match &self.throat {
             Some(a) => Some(a.clone()),
             None => None,
         }
     }
-}
 
-impl<T> Drop for Thresher<T> {
-    /// Drop with thread join if exists
-    fn drop(&mut self) {
-        self.throat = None;
-        if let Some(h) = self.worker.take() {
-            let _ = h.join();
-        }
+    pub fn kill(self) {
+    }
+
+    pub fn halt(self) {
+        self.inloop.store(false, Ordering::Relaxed);
     }
 }
 
+impl<T: Send> Drop for Thresher<T> {
+    /// Drop with thread join if exists
+    fn drop(&mut self) {
+        self.throat = None;
+        //self.inloop.store(false, Ordering::Relaxed);
+        if let Some(h) = self.worker.take() {
+            let _ = h.join();
+        }
+        println!("Dropped *************** ")
+    }
+}
